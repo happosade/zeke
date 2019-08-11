@@ -1,0 +1,12 @@
+steps:
+    - script: sed -i 's/# \(.*multiverse$\)/\1/g' /etc/apt/sources.list
+    - script: apt-get install software-properties-common -y
+    - script: add-apt-repository "deb http://apt.llvm.org/trusty/ llvm-toolchain-trusty main"
+    - script: apt-get update
+    - script: apt-get -y upgrade
+    - script: |
+        apt-get install -y --allow-unauthenticated \
+        build-essential libexpat1 libexpat1-dev python3.4-dev \
+        git man vim wget screen sudo telnet \
+        llvm-3.4 clang-3.4 binutils-arm-none-eabi libncurses5-dev \
+        mtools dosfstools

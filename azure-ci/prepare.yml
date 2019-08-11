@@ -3,7 +3,6 @@ steps:
     - script: sudo apt-get install software-properties-common -y
     - script: sudo add-apt-repository "deb http://apt.llvm.org/trusty/ llvm-toolchain-trusty main"
     - script: sudo apt-get update
-    - script: sudo apt-get -y upgrade
     - script: |
         sudo apt-get install -y --allow-unauthenticated \
         build-essential libexpat1 libexpat1-dev python3.4-dev \

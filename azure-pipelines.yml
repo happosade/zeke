@@ -23,4 +23,3 @@ steps:
   displayName: 'Run a multi-line script'
 
 - template: azure-ci/prepare.yml
-  displayName: Prepare env

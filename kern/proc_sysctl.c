@@ -5,6 +5,7 @@
  * @brief   Kernel process management source file. This file is responsible for
  *          thread creation and management.
  * @section LICENSE
+ * Copyright (c) 2019 Olli Vanhoja <olli.vanhoja@alumni.helsinki.fi>
  * Copyright (c) 2017 Olli Vanhoja <olli.vanhoja@cs.helsinki.fi>
  * All rights reserved.
  *
@@ -81,13 +82,15 @@ static int proc_sysctl_pids(struct sysctl_oid * oidp, struct sysctl_req * req)
     proc_get_pids(pids);
     PROC_UNLOCK();
 
-    retval = sysctl_handle_opaque(oidp, pids, configMAXPROC + 1, req);
+    retval = sysctl_handle_opaque(oidp, pids,
+                                  (configMAXPROC + 1) * sizeof(pid_t),
+                                  req);
     proc_release_pids_buffer(pids);
 
     return retval;
 }
 
-static int sysctl_proc_vmmap(struct sysctl_oid * oidp,
+static int proc_sysctl_vmmap(struct sysctl_oid * oidp,
                              struct proc_info * proc,
                              struct sysctl_req * req)
 {
@@ -138,6 +141,25 @@ out:
     return retval;
 }
 
+/**
+ * Count the number of open files
+ */
+static int proc_sysctl_nfds(struct sysctl_oid * oidp,
+                            struct proc_info * proc,
+                            struct sysctl_req * req)
+{
+    files_t * files = proc->files;
+    int nfds = 0;
+
+    for (int i = 0; i < files->count; i++) {
+        if (files->fd[i]) {
+            nfds++;
+        }
+    }
+
+    return sysctl_handle_int(oidp, NULL, nfds, req);
+}
+
 static int proc_sysctl_pid(struct sysctl_oid * oidp, int * mib, int len,
                            struct sysctl_req * req)
 {
@@ -155,8 +177,7 @@ static int proc_sysctl_pid(struct sysctl_oid * oidp, int * mib, int len,
         return -ESRCH;
     }
 
-    if (curproc->cred.euid != proc->cred.euid ||
-        priv_check(&curproc->cred, PRIV_PROC_STAT)) {
+    if (priv_check_cred(req->cred, &proc->cred, PRIV_PROC_STAT)) {
         retval = -ESRCH;
         goto out;
     }
@@ -174,13 +195,14 @@ static int proc_sysctl_pid(struct sysctl_oid * oidp, int * mib, int len,
     }
     break;
     case KERN_PROC_VMMAP:
-        retval = sysctl_proc_vmmap(oidp, proc, req);
+        retval = proc_sysctl_vmmap(oidp, proc, req);
         break;
     case KERN_PROC_FILEDESC:
         /* TODO Implementation */
-    case KERN_PROC_NFDS:
-        /* TODO Implementation */
         retval = -EINVAL;
+        break;
+    case KERN_PROC_NFDS:
+        retval = proc_sysctl_nfds(oidp, proc, req);
         break;
     case KERN_PROC_GROUPS:
         retval = sysctl_handle_opaque(oidp, &proc->cred.sup_gid,
@@ -192,7 +214,10 @@ static int proc_sysctl_pid(struct sysctl_oid * oidp, int * mib, int len,
     case KERN_PROC_ARGS:
         /* TODO Implementation */
     case KERN_PROC_RLIMIT:
-        /* TODO Implementation */
+        retval = sysctl_handle_opaque(oidp, &proc->rlim,
+                                      sizeof(proc->rlim),
+                                      req);
+        break;
     case KERN_PROC_SIGTRAMP:
         /* TODO Implementation */
     case KERN_PROC_CWD:
@@ -207,8 +232,8 @@ out:
     return retval;
 }
 
-static int proc_sysctl_sesssions(struct sysctl_oid * oidp,
-                                 struct sysctl_req * req)
+static int proc_sysctl_sessions(struct sysctl_oid * oidp,
+                                struct sysctl_req * req)
 {
     int retval;
 
@@ -218,7 +243,7 @@ static int proc_sysctl_sesssions(struct sysctl_oid * oidp,
     TAILQ_FOREACH(sp, &proc_session_list_head, s_session_list_entry_) {
         struct kinfo_session s = {
             .s_leader = sp->s_leader,
-            .s_pgrp_count = 0, /* TODO Get pgrp count */
+            .s_pgrp_count = sp->s_pgrp_count,
             .s_ctty_fd = sp->s_ctty_fd,
         };
         strlcpy(s.s_login, sp->s_login, sizeof(s.s_login));
@@ -231,6 +256,73 @@ static int proc_sysctl_sesssions(struct sysctl_oid * oidp,
     retval = 0;
 out:
     PROC_UNLOCK();
+    return retval;
+}
+
+static int proc_sysctl_session(struct sysctl_oid * oidp, int * mib, int len,
+                               struct sysctl_req * req)
+{
+    int retval;
+
+    if (len < 1) {
+        return -EINVAL;
+    }
+
+    pid_t pid = mib[0] == -1 ? curproc->pid : mib[0];
+
+    PROC_LOCK();
+    struct session * sp;
+
+    /* TODO Should processes have a pointer to the session to avoid this. */
+    TAILQ_FOREACH(sp, &proc_session_list_head, s_session_list_entry_) {
+        if (sp->s_leader == pid)
+            break;
+    }
+
+    struct pgrp * pgrp;
+
+    TAILQ_FOREACH(pgrp, &sp->s_pgrp_list_head, pg_pgrp_entry_) {
+        retval = req->oldfunc(req, &pgrp->pg_id, sizeof(pid_t));
+        if (retval < 0)
+            goto out;
+    }
+
+    retval = 0;
+out:
+    PROC_UNLOCK();
+    return retval;
+}
+
+static int proc_sysctl_pgrp(struct sysctl_oid * oidp, int * mib, int len,
+                            struct sysctl_req * req)
+{
+    int retval;
+
+    if (len < 1) {
+        return -EINVAL;
+    }
+
+    pid_t pg_id = mib[0] == -1 ? curproc->pid : mib[0];
+
+    struct proc_info * leader = proc_ref(pg_id);
+    if (!leader) {
+        return -ESRCH;
+    }
+
+    PROC_LOCK();
+    struct pgrp * pgrp = leader->pgrp;
+    struct proc_info * proc;
+
+    TAILQ_FOREACH(proc, &pgrp->pg_proc_list_head, pgrp_proc_entry_) {
+        retval = req->oldfunc(req, &proc->pid, sizeof(pid_t));
+        if (retval < 0)
+            goto out;
+    }
+
+    retval = 0;
+out:
+    PROC_UNLOCK();
+    proc_unref(proc);
     return retval;
 }
 
@@ -250,31 +342,21 @@ static int proc_sysctl(SYSCTL_HANDLER_ARGS)
             return proc_sysctl_pid(oidp, mib + 1, len - 1, req);
         }
     case KERN_PROC_PGRP:
-        if (len == 1) { /* Get the list of process groups */
-        } else { /* Get the list of PIDs in a process group */
+        if (len >= 2) { /* Get the list of PIDs in a process group */
+            return proc_sysctl_pgrp(oidp, mib + 2, len - 1, req);
         }
-        /* TODO Implementation */
+        break;
     case KERN_PROC_SESSION:
         if (len == 1) { /* Get the list of all sessions */
-            return proc_sysctl_sesssions(oidp, req);
+            return proc_sysctl_sessions(oidp, req);
         } else { /* Get the list of pgrp identifiers in a session */
+            return proc_sysctl_session(oidp, mib + 2, len - 1, req);
         }
-        /* TODO Implementation */
-    case KERN_PROC_TTY:
-        /* TODO Implementation */
-    case KERN_PROC_UID:
-        /* TODO Implementation */
-    case KERN_PROC_RUID:
-        /* TODO Implementation */
-    case KERN_PROC_RGID:
-        /* TODO Implementation */
-    case KERN_PROC_GID:
-        /* TODO Implementation */
     default:
         return -EINVAL;
     }
 
     return 0;
 }
-SYSCTL_NODE(_kern, KERN_PROC, proc, CTLFLAG_RW, proc_sysctl,
+SYSCTL_NODE(_kern, KERN_PROC, proc, CTLFLAG_RD, proc_sysctl,
             "High kernel, proc, limits &c");

@@ -65,3 +65,8 @@ MANIFEST=$(find . -name manifest -exec dirname {} \;)
 for dir in $MANIFEST; do
     dir2img "$dir"
 done
+
+# Give a permission to gain capabilities
+mattrib +s 'D:/bin/login'
+mattrib +s 'D:/sbin/getty'
+mattrib +s 'D:/sbin/sinit'

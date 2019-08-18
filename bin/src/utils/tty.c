@@ -1,11 +1,11 @@
 /**
  *******************************************************************************
- * @file    vmmap.c
+ * @file    tty.c
  * @author  Olli Vanhoja
- * @brief   Process vm stats.
+ * @brief   TTY id to string.
  * @section LICENSE
  * Copyright (c) 2019 Olli Vanhoja <olli.vanhoja@alumni.helsinki.fi>
- * Copyright (c) 2017 Olli Vanhoja <olli.vanhoja@cs.helsinki.fi>
+ * Copyright (c) 2016, 2017 Olli Vanhoja <olli.vanhoja@cs.helsinki.fi>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -31,77 +31,87 @@
  *******************************************************************************
  */
 
+#include <dirent.h>
+#include <fcntl.h>
 #include <stdio.h>
-#include <stdlib.h>
-#include <sys/proc.h>
-#include <sys/sysctl.h>
-#include <sysexits.h>
+#include <string.h>
+#include <sys/param.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
-static size_t pid_vmmap(struct kinfo_vmentry ** vmmap, pid_t pid)
+#define DEV_PATH    "/dev"
+
+struct ttydev {
+    dev_t dev;
+    char name[16];
+};
+
+static struct ttydev ttydev[10];
+
+void init_ttydev_arr(void)
 {
-    int mib[5];
+    static char pathbuf[PATH_MAX];
+    DIR * dirp;
+    struct dirent * d;
+    size_t i = 0;
 
-    mib[0] = CTL_KERN;
-    mib[1] = KERN_PROC;
-    mib[2] = KERN_PROC_PID;
-    mib[3] = pid;
-    mib[4] = KERN_PROC_VMMAP;
+    dirp = opendir(DEV_PATH);
+    if (!dirp) {
+        perror("Getting TTY list failed");
+        return;
+    }
 
-    for (int i = 0; i < 3; i++) {
-        size_t size = 0;
-        struct kinfo_vmentry * map;
+    while ((d = readdir(dirp))) {
+        int fildes, istty;
+        struct stat statbuf;
 
+        if (d->d_name[0] == '.' || !(d->d_type & DT_CHR))
+            continue;
 
-        if (sysctl(mib, num_elem(mib), NULL, &size, 0, 0)) {
-            return 0;
-        }
+        snprintf(pathbuf, sizeof(pathbuf), DEV_PATH "/%s", d->d_name);
 
-        map = malloc(size);
-        if (!map)
-            return 0;
-
-        if (sysctl(mib, num_elem(mib), map, &size, 0, 0)) {
-            free(map);
+        fildes = open(pathbuf, O_RDONLY | O_NOCTTY);
+        if (fildes == -1) {
+            perror(pathbuf);
             continue;
         }
-        *vmmap = map;
-        return size / sizeof(struct kinfo_vmentry);
+
+        istty = isatty(fildes);
+        if (fstat(fildes, &statbuf)) {
+            perror(pathbuf);
+            continue;
+        }
+
+        close(fildes);
+
+        if (!istty)
+            continue;
+
+        if (i >= num_elem(ttydev)) {
+            fprintf(stderr, "Out of slots for TTYs");
+            goto out;
+        }
+        ttydev[i].dev = statbuf.st_rdev;
+        strlcpy(ttydev[i].name, d->d_name, sizeof(ttydev[0].name));
+        i++;
     }
-    return 0;
+
+out:
+    closedir(dirp);
 }
 
-int main(int argc, char * argv[], char * envp[])
+char * devttytostr(dev_t tty)
 {
-    pid_t pid;
-    struct kinfo_vmentry * vmmap;
-    struct kinfo_vmentry * entry;
-    size_t n;
+    if (DEV_MAJOR(tty) == 0)
+        goto out;
 
-    if (argc < 2 || sscanf(argv[1], "%d", &pid) != 1) {
-        fprintf(stderr, "usage: %s PID\n", argv[0]);
-
-        return EX_USAGE;
+    for (size_t i = 0; i < num_elem(ttydev); i++) {
+        if (ttydev[i].dev == tty) {
+            return ttydev[i].name;
+        }
     }
 
-    printf("PID: %d\n", pid);
-    n = pid_vmmap(&vmmap, pid);
-    if (n == 0) {
-        perror("Failed to get vmmap for the process");
-        return EX_NOINPUT;
-    }
-
-    printf("START      END        PADDR      FLAGS     UAP\n");
-    entry = vmmap;
-    for (size_t i = 0; i < n; i++) {
-        printf("0x%08x 0x%08x 0x%08x 0x%07x %s\n",
-               entry->reg_start,
-               entry->reg_end,
-               entry->paddr,
-               entry->flags,
-               entry->uap);
-        entry++;
-    }
-
-    free(vmmap);
-    return EX_OK;
+out:
+    return "?";
 }

@@ -27,8 +27,8 @@ include $(ROOT_DIR)/makefiles/user_head.mk
 
 # Binaries #####################################################################
 BIN-y := basename cat chgrp chmod chown cksum cmp cp df dirname du echo env \
-	hostname id kill login logname ls mount ps sh type stty sz umount uptime \
-	rz vmmap wc who xargs
+	hostname id kill login logname ls mount pcaps procstat ps sh type stty sz \
+	umount uptime rz vmmap wc who xargs
 BIN-$(configMINISED) += minised
 
 SBASELUTIL := src/sbase/libutil
@@ -70,7 +70,9 @@ logname-SRC-y := src/sbase/logname.c $(SBASELUTIL)/eprintf.c \
 ls-SRC-y := src/ls.c
 minised-SRC-$(configMINISED) := src/minised/sedcomp.c src/minised/sedexec.c
 mount-SRC-y := src/mount.c src/utils/opt.c
-ps-SRC-y := src/ps.c src/utils/skipwhite.c
+pcaps-SRC-y := src/pcaps.c
+procstat-SRC-y := src/procstat.c src/utils/skipwhite.c src/utils/tty.c
+ps-SRC-y := src/ps.c src/utils/skipwhite.c src/utils/tty.c
 sh-SRC-y := $(wildcard src/sh/*.c) src/utils/gline.c src/utils/skipwhite.c
 stty-SRC-y := src/stty.c
 sz-SRC-y := src/zmodem/sz.c src/zmodem/zm.c src/zmodem/io.c \

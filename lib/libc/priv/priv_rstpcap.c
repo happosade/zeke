@@ -1,11 +1,10 @@
 /**
  *******************************************************************************
- * @file    priv_getpcap.c
+ * @file    priv_rstpcap.c
  * @author  Olli Vanhoja
  * @brief   Process credentials.
  * @section LICENSE
  * Copyright (c) 2019 Olli Vanhoja <olli.vanhoja@alumni.helsinki.fi>
- * Copyright (c) 2014, 2015 Olli Vanhoja <olli.vanhoja@cs.helsinki.fi>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -40,18 +39,11 @@
 #include <sys/priv.h>
 #include <unistd.h>
 
-int priv_getcap(pid_t pid, int bounding, size_t priv)
+int priv_rstpcap(void)
 {
     struct _priv_pcap_args args = {
-        .pid = pid,
-        .priv = priv
+        .mode = PRIV_PCAP_MODE_RST_BND,
     };
-
-    if (bounding) {
-        args.mode = PRIV_PCAP_MODE_GET_BND;
-    } else {
-        args.mode = PRIV_PCAP_MODE_GET_EFF;
-    }
 
     return syscall(SYSCALL_PRIV_PCAP, &args);
 }

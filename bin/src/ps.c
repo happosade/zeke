@@ -4,6 +4,7 @@
  * @author  Olli Vanhoja
  * @brief   ps.
  * @section LICENSE
+ * Copyright (c) 2019 Olli Vanhoja <olli.vanhoja@alumni.helsinki.fi>
  * Copyright (c) 2016, 2017 Olli Vanhoja <olli.vanhoja@cs.helsinki.fi>
  * All rights reserved.
  *
@@ -30,32 +31,15 @@
  *******************************************************************************
  */
 
-#include <ctype.h>
-#include <dirent.h>
-#include <fcntl.h>
-#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
-#include <sys/param.h>
 #include <sys/proc.h>
-#include <sys/stat.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
 #include <sysexits.h>
 #include <time.h>
 #include <unistd.h>
 #include "utils.h"
-
-#define PROC_PATH   "/proc"
-#define DEV_PATH    "/dev"
-
-struct ttydev {
-    dev_t dev;
-    char name[16];
-};
-
-static struct ttydev ttydev[10];
 
 static pid_t * get_pids(void)
 {
@@ -66,8 +50,9 @@ static pid_t * get_pids(void)
 
     if (sysctl(mib_maxproc, num_elem(mib_maxproc), &pids_size, &size, 0, 0))
         return NULL;
+    pids_size *= sizeof(pid_t);
 
-    pids = calloc(pids_size + 1, sizeof(pid_t));
+    pids = calloc(pids_size + sizeof(pid_t), 1);
     if (!pids)
         return NULL;
 
@@ -89,73 +74,6 @@ static int pid2pstat(struct kinfo_proc * ps, pid_t pid)
     mib[4] = KERN_PROC_PSTAT;
 
     return sysctl(mib, num_elem(mib), ps, &size, 0, 0);
-}
-
-void init_ttydev_arr(void)
-{
-    static char pathbuf[PATH_MAX];
-    DIR * dirp;
-    struct dirent * d;
-    size_t i = 0;
-
-    dirp = opendir(DEV_PATH);
-    if (!dirp) {
-        perror("Getting TTY list failed");
-        return;
-    }
-
-    while ((d = readdir(dirp))) {
-        int fildes, istty;
-        struct stat statbuf;
-
-        if (d->d_name[0] == '.' || !(d->d_type & DT_CHR))
-            continue;
-
-        snprintf(pathbuf, sizeof(pathbuf), DEV_PATH "/%s", d->d_name);
-
-        fildes = open(pathbuf, O_RDONLY | O_NOCTTY);
-        if (fildes == -1) {
-            perror(pathbuf);
-            continue;
-        }
-
-        istty = isatty(fildes);
-        if (fstat(fildes, &statbuf)) {
-            perror(pathbuf);
-            continue;
-        }
-
-        close(fildes);
-
-        if (!istty)
-            continue;
-
-        if (i >= num_elem(ttydev)) {
-            fprintf(stderr, "Out of slots for TTYs");
-            goto out;
-        }
-        ttydev[i].dev = statbuf.st_rdev;
-        strlcpy(ttydev[i].name, d->d_name, sizeof(ttydev[0].name));
-        i++;
-    }
-
-out:
-    closedir(dirp);
-}
-
-char * devttytostr(dev_t tty)
-{
-    if (DEV_MAJOR(tty) == 0)
-        goto out;
-
-    for (size_t i = 0; i < num_elem(ttydev); i++) {
-        if (ttydev[i].dev == tty) {
-            return ttydev[i].name;
-        }
-    }
-
-out:
-    return "?";
 }
 
 int main(int argc, char * argv[], char * envp[])

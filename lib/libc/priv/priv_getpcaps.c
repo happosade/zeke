@@ -1,10 +1,10 @@
 /**
  *******************************************************************************
- * @file    proc.h
+ * @file    priv_getpcaps.c
  * @author  Olli Vanhoja
- * @brief   Userland process management.
+ * @brief   Process credentials.
  * @section LICENSE
- * Copyright (c) 2017 Olli Vanhoja <olli.vanhoja@cs.helsinki.fi>
+ * Copyright (c) 2019 Olli Vanhoja <olli.vanhoja@alumni.helsinki.fi>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,49 +28,21 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  *******************************************************************************
- */
+*/
 
-#ifndef _SYS_PROC_H_
-#define _SYS_PROC_H_
-
+#define __SYSCALL_DEFS__
+#include <stddef.h>
 #include <stdint.h>
-#include <sys/param.h>
 #include <sys/types.h>
+#include <syscall.h>
+#include <sys/priv.h>
 
-/**
- * Process stat returned by sysctl.
- */
-struct kinfo_proc {
-    char name[16];
-    pid_t pid;
-    pid_t pgrp;
-    pid_t sid;
-    dev_t ctty; /*!< Controlling TTY */
-    uid_t ruid;
-    uid_t euid;
-    uid_t suid;
-    gid_t rgid;
-    gid_t egid;
-    gid_t sgid;
-    clock_t utime; /*!< Amount of time scheduled in user mode. */
-    clock_t stime; /*!< Amount of time scheduled in kernel mode. */
-    void * brk_start; /*!< Break start address. (end of heap data) */
-    void * brk_stop; /*!< Break stop address. (end of heap region) */
-};
+int priv_getpcaps(uint32_t * effective, uint32_t * bounding)
+{
+    struct _priv_pcap_getall_args args = {
+        .effective = effective,
+        .bounding = bounding,
+    };
 
-struct kinfo_session {
-    pid_t s_leader;             /*!< Session leader. */
-    int s_pgrp_count;
-    int s_ctty_fd;              /*!< fd number of the controlling terminal. */
-    char s_login[MAXLOGNAME];   /*!< Setlogin() name. */
-};
-
-struct kinfo_vmentry {
-    uintptr_t paddr;
-    uintptr_t reg_start;
-    uintptr_t reg_end;
-    unsigned long flags;
-    char uap[5];
-};
-
-#endif /* _SYS_PROC_H_ */
+    return syscall(SYSCALL_PRIV_PCAP_GETALL, &args);
+}

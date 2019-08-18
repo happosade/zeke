@@ -1,11 +1,10 @@
 /**
  *******************************************************************************
- * @file    vmmap.c
+ * @file    pcaps.c
  * @author  Olli Vanhoja
- * @brief   Process vm stats.
+ * @brief   Show process capabilities.
  * @section LICENSE
  * Copyright (c) 2019 Olli Vanhoja <olli.vanhoja@alumni.helsinki.fi>
- * Copyright (c) 2017 Olli Vanhoja <olli.vanhoja@cs.helsinki.fi>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -29,79 +28,58 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  *******************************************************************************
- */
+*/
 
+#include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/proc.h>
-#include <sys/sysctl.h>
+#include <sys/priv.h>
 #include <sysexits.h>
 
-static size_t pid_vmmap(struct kinfo_vmentry ** vmmap, pid_t pid)
+static void print_n(uint32_t * caps)
 {
-    int mib[5];
+    size_t i = _PRIV_MLEN - 1;
 
-    mib[0] = CTL_KERN;
-    mib[1] = KERN_PROC;
-    mib[2] = KERN_PROC_PID;
-    mib[3] = pid;
-    mib[4] = KERN_PROC_VMMAP;
+    do {
+        printf("%08x", caps[i]);
+    } while (--i > 0);
 
-    for (int i = 0; i < 3; i++) {
-        size_t size = 0;
-        struct kinfo_vmentry * map;
-
-
-        if (sysctl(mib, num_elem(mib), NULL, &size, 0, 0)) {
-            return 0;
-        }
-
-        map = malloc(size);
-        if (!map)
-            return 0;
-
-        if (sysctl(mib, num_elem(mib), map, &size, 0, 0)) {
-            free(map);
-            continue;
-        }
-        *vmmap = map;
-        return size / sizeof(struct kinfo_vmentry);
-    }
-    return 0;
+    putchar('\n');
 }
 
-int main(int argc, char * argv[], char * envp[])
+static void print_h(uint32_t * caps)
 {
-    pid_t pid;
-    struct kinfo_vmentry * vmmap;
-    struct kinfo_vmentry * entry;
-    size_t n;
+    for (size_t i = 0; i < _PRIV_MLEN; i++) {
+        uint32_t b = caps[i];
+        for (int j = 0; j < 32; j++) {
+            if ((b >> j) & 1) {
+                size_t cap_num = i * 32 + j;
 
-    if (argc < 2 || sscanf(argv[1], "%d", &pid) != 1) {
-        fprintf(stderr, "usage: %s PID\n", argv[0]);
+                printf("%s (%d), ", priv_cap_name[cap_num], cap_num);
+            }
+        }
+    }
+    putchar('\n');
+}
 
-        return EX_USAGE;
+int main(int argc, char * argv[])
+{
+    int err;
+    uint32_t eff[_PRIV_MLEN];
+    uint32_t bound[_PRIV_MLEN];
+
+    err = priv_getpcaps(eff, bound);
+    if (err) {
+        return EX_OSERR;
     }
 
-    printf("PID: %d\n", pid);
-    n = pid_vmmap(&vmmap, pid);
-    if (n == 0) {
-        perror("Failed to get vmmap for the process");
-        return EX_NOINPUT;
-    }
+    printf("effective: ");
+    print_n(eff);
+    print_h(eff);
+    printf("bounding:  ");
+    print_n(bound);
+    print_h(bound);
 
-    printf("START      END        PADDR      FLAGS     UAP\n");
-    entry = vmmap;
-    for (size_t i = 0; i < n; i++) {
-        printf("0x%08x 0x%08x 0x%08x 0x%07x %s\n",
-               entry->reg_start,
-               entry->reg_end,
-               entry->paddr,
-               entry->flags,
-               entry->uap);
-        entry++;
-    }
-
-    free(vmmap);
-    return EX_OK;
+    return 0;
 }

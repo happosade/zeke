@@ -4,6 +4,7 @@
  * @author  Olli Vanhoja
  * @brief   Header file for common elf definitions.
  * @section LICENSE
+ * Copyright (c) 2019 Olli Vanhoja <olli.vanhoja@alumni.helsinki.fi>
  * Copyright (c) 2014 - 2016 Olli Vanhoja <olli.vanhoja@cs.helsinki.fi>
  * Copyright (c) 2000, 2001, 2008, 2011, David E. O'Brien
  * Copyright (c) 1998 John D. Polstra.
@@ -577,11 +578,13 @@ typedef struct elf_prpsinfo {
 #define NT_ARM_TLS              0x401   /* ARM TLS register */
 
 /* Values for n_type.  Used in object files. */
-#define NT_VERSION      1   /* Version string. */
-#define NT_ARCH         2   /* Architecture string. */
+#define NT_VERSION          1   /* Version string. */
+#define NT_ARCH             2   /* Architecture string. */
 
 /* Values for n_type.  Used by Zeke */
-#define NT_STACKSIZE    3
+#define NT_STACKSIZE        3   /* Requested stack size. */
+#define NT_CAPABILITIES     4   /* Required gainable capabilties. */
+#define NT_CAPABILITIES_REQ 5   /* Required non-gainable capabilties. */
 
 /* Symbol Binding - ELFNN_ST_BIND - st_info */
 #define STB_LOCAL       0   /* Local symbol */

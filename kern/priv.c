@@ -56,6 +56,32 @@ static int securelevel = configBOOT_SECURELEVEL;
 SYSCTL_INT(_security, OID_AUTO, securelevel, CTLTYPE_INT|CTLFLAG_RW,
            &securelevel, 0, "Current secure level");
 
+const char * priv_cap_name[_PRIV_MENT] = {
+    PRIV_FOREACH_CAP(PRIV_GENERATE_CAP_STRING_ARRAY)
+};
+
+/**
+ * Default capabilities of a process.
+ */
+static int default_privs[] = {
+    /*
+     * Default grants.
+     * Some permissions are just needed for normal operation
+     * but sometimes we wan't to restrict these too.
+     */
+    PRIV_CLRCAP,
+    PRIV_TTY_SETA,
+    PRIV_VFS_READ,
+    PRIV_VFS_WRITE,
+    PRIV_VFS_EXEC,
+    PRIV_VFS_LOOKUP,
+    PRIV_VFS_CHROOT,
+    PRIV_VFS_STAT,
+    PRIV_PROC_FORK,
+    PRIV_SIGNAL_ACTION,
+    0
+};
+
 int securelevel_ge(int level)
 {
     return (securelevel >= level ? -EPERM : 0);
@@ -82,12 +108,12 @@ int priv_grp_is_member(const struct cred * cred, gid_t gid)
     return 0;
 }
 
-static int priv_cred_eff_get(const struct cred * cred, int priv)
+int priv_cred_eff_get(const struct cred * cred, int priv)
 {
     return bitmap_status(cred->pcap_effmap, priv, _PRIV_MLEN);
 }
 
-static int priv_cred_eff_set(struct cred * cred, int priv)
+int priv_cred_eff_set(struct cred * cred, int priv)
 {
     int bound = bitmap_status(cred->pcap_bndmap, priv, _PRIV_MLEN);
 
@@ -101,30 +127,46 @@ static int priv_cred_eff_set(struct cred * cred, int priv)
     return bitmap_set(cred->pcap_effmap, priv, _PRIV_MLEN);
 }
 
-static int priv_cred_eff_clear(struct cred * cred, int priv)
+int priv_cred_eff_clear(struct cred * cred, int priv)
 {
     return bitmap_clear(cred->pcap_effmap, priv, _PRIV_MLEN);
 }
 
-static int priv_cred_bound_get(const struct cred * cred, int priv)
+int priv_cred_bound_get(const struct cred * cred, int priv)
 {
     return bitmap_status(cred->pcap_bndmap, priv, _PRIV_MLEN);
 }
 
-static int priv_cred_bound_set(struct cred * cred, int priv)
+int priv_cred_bound_set(struct cred * cred, int priv)
 {
     return bitmap_set(cred->pcap_bndmap, priv, _PRIV_MLEN);
 }
 
-static int priv_cred_bound_clear(struct cred * cred, int priv)
+int priv_cred_bound_clear(struct cred * cred, int priv)
 {
     return bitmap_clear(cred->pcap_bndmap, priv, _PRIV_MLEN);
+}
+
+static void priv_cred_bound_reset(struct cred * cred)
+{
+    int * priv;
+    int err;
+
+    err = bitmap_block_update(cred->pcap_bndmap, 0, 0, _PRIV_MENT, _PRIV_MLEN);
+    KASSERT(err == 0, "clear all bounding caps");
+
+    for (priv = default_privs; *priv; priv++) {
+        int v = *priv;
+
+        priv_cred_bound_set(cred, v);
+    }
 }
 
 void priv_cred_init(struct cred * cred)
 {
     size_t i = 0;
     gid_t * gid = cred->sup_gid;
+    int * priv;
 
     /*
      * Clear supplementary groups.
@@ -133,51 +175,11 @@ void priv_cred_init(struct cred * cred)
         gid[i] = NOGROUP;
     }
 
-    int privs[] = {
-        /*
-         * Default grants.
-         * Some permissions are just needed for normal operation
-         * but sometimes we wan't to restrict these too.
-         */
-        PRIV_CLRCAP,
-        PRIV_TTY_SETA,
-        PRIV_VFS_READ,
-        PRIV_VFS_WRITE,
-        PRIV_VFS_EXEC,
-        PRIV_VFS_LOOKUP,
-        PRIV_VFS_CHROOT,
-        PRIV_VFS_STAT,
-        /*
-         * Super user grants.
-         * Later on we can remove most of these privileges as we implement a
-         * file system based capabilities for binaries.
-         */
-        /* Capabilities management */
-        PRIV_SETEFF,
-        PRIV_SETBND,
-        /* Credential management */
-        PRIV_CRED_SETUID,
-        PRIV_CRED_SETEUID,
-        PRIV_CRED_SETSUID,
-        PRIV_CRED_SETGID,
-        PRIV_CRED_SETEGID,
-        PRIV_CRED_SETSGID,
-        PRIV_CRED_SETGROUPS,
-        /* Process caps */
-        PRIV_PROC_SETLOGIN,
-        /* IPC */
-        PRIV_SIGNAL_OTHER,
-        /* sysctl */
-        PRIV_SYSCTL_WRITE,
-        /* vfs */
-        PRIV_VFS_ADMIN,
-        PRIV_VFS_CHROOT,
-        PRIV_VFS_MOUNT,
-        0
-    };
-    int * priv;
+    /* First make syre the capability maps are clear. */
+    (void)bitmap_block_update(cred->pcap_effmap, 0, 0, _PRIV_MENT, _PRIV_MLEN);
+    (void)bitmap_block_update(cred->pcap_bndmap, 0, 0, _PRIV_MENT, _PRIV_MLEN);
 
-    for (priv = privs; *priv; priv++) {
+    for (priv = default_privs; *priv; priv++) {
         int v = *priv;
 
         priv_cred_bound_set(cred, v);
@@ -185,13 +187,21 @@ void priv_cred_init(struct cred * cred)
     }
 }
 
-void priv_cred_init_inherit(struct cred * cred)
+void priv_cred_init_fork(struct cred * cred)
 {
     /* Clear effective capabilities that are not set in the bounding set. */
     for (size_t i = 0; i < _PRIV_MENT; i++) {
         if (priv_cred_bound_get(cred, i) == 0) {
             priv_cred_eff_clear(cred, i);
         }
+    }
+}
+
+void priv_cred_init_exec(struct cred * cred)
+{
+    if (priv_cred_eff_get(cred, PRIV_EXEC_B2E)) {
+        /* Copy the bounding set to the effective set. */
+        memcpy(cred->pcap_effmap, cred->pcap_bndmap, _PRIV_MSIZE);
     }
 }
 
@@ -266,22 +276,29 @@ out:
 int priv_check_cred(const struct cred * fromcred, const struct cred * tocred,
                     int priv)
 {
-    switch (priv) {
-    /*
-     * RFE should we make this possible if PRIV_SIGNAL_OTHER is set in fromcred?
-     */
-    case PRIV_SIGNAL_OTHER:
-            if ((fromcred->euid != tocred->uid &&
-                 fromcred->euid != tocred->suid) &&
-                (fromcred->uid  != tocred->uid &&
-                 fromcred->uid  != tocred->suid)) {
-                return -EPERM;
-            }
-    default:
-            return priv_check(fromcred, priv);
+    int err;
+
+    err = priv_check(fromcred, priv);
+    if (err == 0 || err != -EPERM) {
+        return err;
     }
 
-    return 0;
+    switch (priv) {
+    case PRIV_SIGNAL_OTHER:
+        if (!((fromcred->euid != tocred->uid &&
+             fromcred->euid != tocred->suid) &&
+            (fromcred->uid  != tocred->uid &&
+             fromcred->uid  != tocred->suid))) {
+            return 0;
+        }
+        break;
+    default:
+        if (fromcred->euid == tocred->euid) {
+            return 0;
+        }
+    }
+
+    return -EPERM;
 }
 
 /**
@@ -292,41 +309,35 @@ int priv_check_cred(const struct cred * fromcred, const struct cred * tocred,
 static intptr_t sys_priv_pcap(__user void * user_args)
 {
     struct _priv_pcap_args args;
-    struct proc_info * proc;
     struct cred * proccred;
     int err;
 
     err = copyin(user_args, &args, sizeof(args));
     if (err) {
-        set_errno(EFAULT);
-        return -1;
+        err = -EFAULT;
+        goto out;
     }
 
-    proc = proc_ref(args.pid);
-    if (!proc) {
-        set_errno(ESRCH);
-        return -1;
-    }
-    proccred = &proc->cred;
+    proccred = &curproc->cred;
 
     switch (args.mode) {
     case PRIV_PCAP_MODE_GET_EFF: /* Get effective */
         err = priv_cred_eff_get(proccred, args.priv);
         break;
     case PRIV_PCAP_MODE_SET_EFF: /* Set effective */
-        err = priv_check(&curproc->cred, PRIV_SETEFF);
+        err = priv_check(proccred, PRIV_SETEFF);
         if (err) {
-            set_errno(EPERM);
-            return -1;
+            err = -EPERM;
+            break;
         }
 
         err = priv_cred_eff_set(proccred, args.priv);
         break;
     case PRIV_PCAP_MODE_CLR_EFF: /* Clear effective */
-        err = priv_check(&curproc->cred, PRIV_CLRCAP);
+        err = priv_check(proccred, PRIV_CLRCAP);
         if (err) {
-            set_errno(EPERM);
-            return -1;
+            err = -EPERM;
+            break;
         }
 
         err = priv_cred_eff_clear(proccred, args.priv);
@@ -335,37 +346,82 @@ static intptr_t sys_priv_pcap(__user void * user_args)
         err = priv_cred_bound_get(proccred, args.priv);
         break;
     case PRIV_PCAP_MODE_SET_BND: /* Set bounding */
-        err = priv_check(&curproc->cred, PRIV_SETBND);
+        err = priv_check(proccred, PRIV_SETBND);
         if (err) {
-            set_errno(EPERM);
-            return -1;
+            err = -EPERM;
+            break;
         }
 
         err = priv_cred_bound_set(proccred, args.priv);
         break;
     case PRIV_PCAP_MODE_CLR_BND: /* Clear bounding */
-        err = priv_check(&curproc->cred, PRIV_CLRCAP);
+        err = priv_check(proccred, PRIV_CLRCAP);
         if (err) {
-            set_errno(EPERM);
-            return -1;
+            err = -EPERM;
+            break;
         }
 
         priv_cred_bound_clear(proccred, args.priv);
+        break;
+    case PRIV_PCAP_MODE_RST_BND:
+        /* Reset bounding capabilities to the default */
+        err = priv_check(proccred, PRIV_SETBND);
+        if (err) {
+            err = -EPERM;
+            break;
+        }
+
+        priv_cred_bound_reset(proccred);
         break;
     default:
         err = -EINVAL;
     }
 
+out:
     if (err) {
         set_errno(-err);
         err = -1;
     }
 
-    proc_unref(proc);
     return err;
+}
+
+/**
+ * @return -1 if failed;
+ *          0 if status was zero or operation succeed;
+ *          greater than zero status was one.
+ */
+static intptr_t sys_priv_pcap_getall(__user void * user_args)
+{
+    struct _priv_pcap_getall_args args;
+    struct cred * proccred = &curproc->cred;
+    int err;
+
+    err = copyin(user_args, &args, sizeof(args));
+    if (err) {
+        set_errno(EFAULT);
+        return -1;
+    }
+
+    if (args.effective) {
+        err = copyout(proccred->pcap_effmap,
+                      (__user void *)args.effective, _PRIV_MSIZE);
+    }
+    if (err == 0 && args.bounding) {
+        err = copyout(proccred->pcap_bndmap,
+                      (__user void *)args.bounding, _PRIV_MSIZE);
+    }
+
+    if (err) {
+        set_errno(-err);
+        return -1;
+    }
+
+    return 0;
 }
 
 static const syscall_handler_t priv_sysfnmap[] = {
     ARRDECL_SYSCALL_HNDL(SYSCALL_PRIV_PCAP, sys_priv_pcap),
+    ARRDECL_SYSCALL_HNDL(SYSCALL_PRIV_PCAP_GETALL, sys_priv_pcap_getall),
 };
 SYSCALL_HANDLERDEF(priv_syscall, priv_sysfnmap)

@@ -34,16 +34,12 @@
 #define __SYSCALL_DEFS__
 #include <stddef.h>
 #include <sys/types.h>
-#include <sys/_syscred.h>
 #include <syscall.h>
-#include <errno.h>
 #include <sys/priv.h>
-#include <unistd.h>
 
-int priv_setpcap(pid_t pid, int bounding, size_t priv, int value)
+int priv_setpcap(int bounding, size_t priv, int value)
 {
     struct _priv_pcap_args args = {
-        .pid = pid,
         .priv = priv
     };
 

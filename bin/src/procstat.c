@@ -1,11 +1,11 @@
 /**
  *******************************************************************************
- * @file    vmmap.c
+ * @file    procstat.c
  * @author  Olli Vanhoja
- * @brief   Process vm stats.
+ * @brief   Process stats.
  * @section LICENSE
  * Copyright (c) 2019 Olli Vanhoja <olli.vanhoja@alumni.helsinki.fi>
- * Copyright (c) 2017 Olli Vanhoja <olli.vanhoja@cs.helsinki.fi>
+ * Copyright (c) 2016, 2017 Olli Vanhoja <olli.vanhoja@cs.helsinki.fi>
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -36,6 +36,22 @@
 #include <sys/proc.h>
 #include <sys/sysctl.h>
 #include <sysexits.h>
+#include <unistd.h>
+#include "utils.h"
+
+static int pid2pstat(struct kinfo_proc * ps, pid_t pid)
+{
+    int mib[5];
+    size_t size = sizeof(*ps);
+
+    mib[0] = CTL_KERN;
+    mib[1] = KERN_PROC;
+    mib[2] = KERN_PROC_PID;
+    mib[3] = pid;
+    mib[4] = KERN_PROC_PSTAT;
+
+    return sysctl(mib, num_elem(mib), ps, &size, 0, 0);
+}
 
 static size_t pid_vmmap(struct kinfo_vmentry ** vmmap, pid_t pid)
 {
@@ -73,9 +89,9 @@ static size_t pid_vmmap(struct kinfo_vmentry ** vmmap, pid_t pid)
 int main(int argc, char * argv[], char * envp[])
 {
     pid_t pid;
-    struct kinfo_vmentry * vmmap;
-    struct kinfo_vmentry * entry;
-    size_t n;
+    long clk_tck;
+    struct kinfo_proc ps;
+    clock_t utime, stime, sutime;
 
     if (argc < 2 || sscanf(argv[1], "%d", &pid) != 1) {
         fprintf(stderr, "usage: %s PID\n", argv[0]);
@@ -83,25 +99,42 @@ int main(int argc, char * argv[], char * envp[])
         return EX_USAGE;
     }
 
-    printf("PID: %d\n", pid);
-    n = pid_vmmap(&vmmap, pid);
-    if (n == 0) {
-        perror("Failed to get vmmap for the process");
-        return EX_NOINPUT;
-    }
+    if (pid2pstat(&ps, pid) == -1)
+        return EX_OSERR;
 
-    printf("START      END        PADDR      FLAGS     UAP\n");
-    entry = vmmap;
-    for (size_t i = 0; i < n; i++) {
-        printf("0x%08x 0x%08x 0x%08x 0x%07x %s\n",
-               entry->reg_start,
-               entry->reg_end,
-               entry->paddr,
-               entry->flags,
-               entry->uap);
-        entry++;
-    }
+    clk_tck = sysconf(_SC_CLK_TCK);
+    init_ttydev_arr();
 
-    free(vmmap);
+    printf("Process\n");
+    printf("  PID  PGRP   SID TTY      CMD\n"
+          "%5d %5d %5d %-6s   %s\n",
+           ps.pid,
+           ps.pgrp,
+           ps.sid,
+           devttytostr(ps.ctty),
+           ps.name);
+
+    printf(" RUID  EUID  SUID  RGID  EGID  SGID\n"
+           "%5d %5d %5d %5d %5d %5d\n",
+           ps.ruid, ps.euid, ps.suid, ps.rgid, ps.egid, ps.sgid);
+
+    utime = ps.utime / clk_tck;
+    stime = ps.stime / clk_tck;
+    sutime = ps.utime + ps.stime;
+    printf("   UTIME    STIME     TIME\n"
+           "   %02u:%02u:%02u %02u:%02u:%02u %02u:%02u:%02u\n",
+           utime / 3600, (utime % 3600) / 60, utime % 60,
+           stime / 3600, (stime % 3600) / 60, stime % 60,
+           sutime / 3600, (sutime % 3600) / 60, sutime % 60);
+
+    printf("\nSession\n");
+    /* TODO */
+
+    printf("\nFiles\n");
+    printf("  FD V FLAGS    REF  OFFSET NAME\n");
+
+    printf("\nThreads\n");
+    /* TODO Thread stats */
+
     return EX_OK;
 }

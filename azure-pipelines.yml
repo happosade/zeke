@@ -18,8 +18,28 @@ steps:
   displayName: 'Run a one-line script'
 
 - script: |
-    echo Add other tasks to build, test, and deploy your project.
-    echo See https://aka.ms/yaml
-  displayName: 'Run a multi-line script'
+    local SONAR_SCANNER_VERSION=3.3.0.1492
+    export SONAR_SCANNER_HOME=$HOME/.sonar/sonar-scanner-$SONAR_SCANNER_VERSION
+    rm -rf $SONAR_SCANNER_HOME
+    mkdir -p $SONAR_SCANNER_HOME
+    curl -sSLo $HOME/.sonar/sonar-scanner.zip http://repo1.maven.org/maven2/org/sonarsource/scanner/cli/sonar-scanner-cli/$SONAR_SCANNER_VERSION/sonar-scanner-cli-$SONAR_SCANNER_VERSION.zip
+    unzip $HOME/.sonar/sonar-scanner.zip -d $HOME/.sonar/
+    rm $HOME/.sonar/sonar-scanner.zip
+    export PATH=$SONAR_SCANNER_HOME/bin:$PATH
+    export SONAR_SCANNER_OPTS="-server"
+
+    curl -LsS https://sonarcloud.io/static/cpp/build-wrapper-linux-x86.zip > build-wrapper-linux-x86.zip
+    unzip build-wrapper-linux-x86.zip
+
+    build-wrapper-linux-x86-64 --out-dir bw-output make clean all
+
+    sonar-scanner \
+      -Dsonar.projectKey=happosade_zeke \
+      -Dsonar.organization=happosade \
+      -Dsonar.sources=. \
+      -Dsonar.cfamily.build-wrapper-output=bw-output \
+      -Dsonar.host.url=https://sonarcloud.io \
+      -Dsonar.login=05271881d82584b673f2282465b645b2580adfa4
+  displayName: 'Sonar with no shame'
 
 - template: azure-ci/prepare.yml
